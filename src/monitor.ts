@@ -25,12 +25,14 @@ const FUNCTION_SIGNATURES = {
 
 // Router Function Signatures
 const ROUTER_SIGNATURES = {
-    SWAP_ETH_FOR_EXACT_TOKENS: "0xfb3bdb41",
-    SWAP_EXACT_ETH_FOR_TOKENS: "0x7ff36ab5",
-    SWAP_EXACT_TOKENS_FOR_ETH: "0x18cbafe5",
-    SWAP_TOKENS_FOR_EXACT_ETH: "0x4a25d94a",
-    SWAP_EXACT_TOKENS_FOR_TOKENS: "0x38ed1739",
-    SWAP_TOKENS_FOR_EXACT_TOKENS: "0x8803dbee",
+    SWAP_ETH_FOR_EXACT_TOKENS: "0xfb3bdb41", // swapETHForExactTokens(uint amountOut, address[] path, address to, uint deadline)
+    SWAP_EXACT_ETH_FOR_TOKENS: "0x7ff36ab5", // swapExactETHForTokens(uint amountOutMin, address[] path, address to, uint deadline)
+    SWAP_EXACT_TOKENS_FOR_ETH: "0x18cbafe5", // swapExactTokensForETH(uint amountIn, uint amountOutMin, address[] path, address to, uint deadline)
+    SWAP_TOKENS_FOR_EXACT_ETH: "0x4a25d94a", // swapTokensForExactETH(uint amountOut, uint amountInMax, address[] path, address to, uint deadline)
+    SWAP_EXACT_TOKENS_FOR_TOKENS: "0x38ed1739", // swapExactTokensForTokens(uint amountIn, uint amountOutMin, address[] path, address to, uint deadline)
+    SWAP_TOKENS_FOR_EXACT_TOKENS: "0x8803dbee", // swapTokensForExactTokens(uint amountOut, uint amountInMax, address[] path, address to, uint deadline)
+    ADD_LIQUIDITY_ETH: "0xf305d719", // addLiquidityETH(address token, uint amountTokenDesired, uint amountTokenMin, uint amountETHMin, address to, uint deadline)
+    REMOVE_LIQUIDITY_ETH: "0xbaa2abde", // removeLiquidityETH(address token, uint liquidity, uint amountTokenMin, uint amountETHMin, address to, uint deadline)
 };
 
 // Configure Alchemy SDK
@@ -39,17 +41,7 @@ const config = {
     network: Network.ETH_MAINNET,
 };
 
-// Types
-interface TransactionData {
-    hash: string;
-    from: string;
-    to: string;
-    value: string;
-    type: string;
-    timestamp: number;
-}
-
-class TransactionMonitor {
+class RouterMonitor {
     private alchemy: Alchemy;
 
     constructor() {
@@ -58,109 +50,68 @@ class TransactionMonitor {
     }
 
     private async setupSubscriptions() {
-        console.log("Setting up subscriptions...");
+        console.log("Setting up router monitoring...");
+        console.log(`Monitoring Uniswap V2 Router: ${UNISWAP_V2_ROUTER}`);
 
-        // Debug log
-        console.log("Monitoring addresses:", {
-            pool: USDC_ETH_POOL,
-            router: UNISWAP_V2_ROUTER,
-        });
-
-        // Subscribe to pending transactions
         this.alchemy.ws.on(
             {
                 method: AlchemySubscription.PENDING_TRANSACTIONS,
                 toAddress: UNISWAP_V2_ROUTER,
             },
-            (tx) => {
-                // Debug: Log transaction input data
-                const poolAddressInInput = tx.input
-                    .toLowerCase()
-                    .includes(USDC_ETH_POOL.toLowerCase().slice(2));
-
-                console.log(
-                    "Transaction to router:",
-                    poolAddressInInput ? "Involves our pool" : "Different pool"
-                );
-
-                // Check if transaction is for our pool
-                if (poolAddressInInput) {
-                    console.log("Found matching transaction!");
-                    this.handlePendingTransaction(tx);
-                }
-            }
+            this.handleRouterTransaction.bind(this)
         );
 
-        console.log("Subscriptions established");
+        console.log("Router monitoring established");
     }
 
-    private getTransactionType(input: string): string {
-        const functionSignature = input.slice(0, 10);
-
-        switch (functionSignature) {
-            case FUNCTION_SIGNATURES.SWAP:
-                return "SWAP";
-            case FUNCTION_SIGNATURES.ADD_LIQUIDITY:
-                return "ADD_LIQUIDITY";
-            case FUNCTION_SIGNATURES.REMOVE_LIQUIDITY:
-                return "REMOVE_LIQUIDITY";
-            case FUNCTION_SIGNATURES.MINT:
-                return "MINT";
-            case FUNCTION_SIGNATURES.BURN:
-                return "BURN";
-            case FUNCTION_SIGNATURES.SYNC:
-                return "SYNC";
-            default:
-                console.log("Unknown function signature:", functionSignature);
-                return "UNKNOWN";
+    private getRouterFunctionName(input: string): string {
+        const signature = input.slice(0, 10);
+        for (const [name, sig] of Object.entries(ROUTER_SIGNATURES)) {
+            if (signature === sig) return name;
         }
+        return "UNKNOWN";
+    }
+
+    private extractTokenPath(input: string): string[] {
+        // Skip function signature (first 10 chars) and parameters before path
+        const inputData = input.slice(10);
+        // Extract 20-byte (40 hex chars) sequences that could be addresses
+        const addresses = (inputData.match(/.{40}/g) || []) as string[];
+
+        return addresses.map((addr) => `0x${addr}`);
     }
 
     private formatValue(value: string): string {
         return `${parseFloat(ethers.formatEther(value)).toFixed(4)} ETH`;
     }
 
-    private getRouterFunctionName(input: string): string {
-        const signature = input.slice(0, 10);
-        switch (signature) {
-            case ROUTER_SIGNATURES.SWAP_ETH_FOR_EXACT_TOKENS:
-                return "SWAP_ETH_FOR_EXACT_TOKENS";
-            case ROUTER_SIGNATURES.SWAP_EXACT_ETH_FOR_TOKENS:
-                return "SWAP_EXACT_ETH_FOR_TOKENS";
-            case ROUTER_SIGNATURES.SWAP_EXACT_TOKENS_FOR_ETH:
-                return "SWAP_EXACT_TOKENS_FOR_ETH";
-            case ROUTER_SIGNATURES.SWAP_TOKENS_FOR_EXACT_ETH:
-                return "SWAP_TOKENS_FOR_EXACT_ETH";
-            case ROUTER_SIGNATURES.SWAP_EXACT_TOKENS_FOR_TOKENS:
-                return "SWAP_EXACT_TOKENS_FOR_TOKENS";
-            case ROUTER_SIGNATURES.SWAP_TOKENS_FOR_EXACT_TOKENS:
-                return "SWAP_TOKENS_FOR_EXACT_TOKENS";
-            default:
-                return "UNKNOWN";
-        }
-    }
-
-    private handlePendingTransaction(transaction: any) {
+    private async handleRouterTransaction(tx: any) {
         try {
-            const functionName = this.getRouterFunctionName(transaction.input);
-            const formattedValue = this.formatValue(transaction.value);
+            const functionName = this.getRouterFunctionName(tx.input);
+            const formattedValue = this.formatValue(tx.value);
             const gasPrice = ethers.formatUnits(
-                transaction.maxFeePerGas || transaction.gasPrice,
+                tx.maxFeePerGas || tx.gasPrice,
                 "gwei"
             );
+            const tokenPath = this.extractTokenPath(tx.input);
 
-            console.log({
-                type: functionName,
-                value: formattedValue,
-                from: transaction.from,
-                gasPrice: `${parseFloat(gasPrice).toFixed(2)} gwei`,
-                hash: transaction.hash,
-            });
+            // Create a formatted log entry
+            console.log("\n🔄 Router Transaction Detected");
+            console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            console.log(`📝 Type: ${functionName}`);
+            console.log(`💰 Value: ${formattedValue}`);
+            console.log(`🛣️  Token Path: ${tokenPath.join(" → ")}`);
+            console.log(`👤 From: ${tx.from}`);
+            console.log(
+                `⛽ Gas Price: ${parseFloat(gasPrice).toFixed(2)} gwei`
+            );
+            console.log(`🔗 Hash: ${tx.hash}`);
+            console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
         } catch (error) {
-            console.error("Error processing transaction:", error);
+            console.error("Error processing router transaction:", error);
         }
     }
 }
 
 // Start the monitor
-const monitor = new TransactionMonitor();
+const monitor = new RouterMonitor();
