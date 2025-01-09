@@ -7,6 +7,7 @@ dotenv.config();
 
 // Constants
 const UNISWAP_V2_ROUTER = "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D";
+const WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
 const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY;
 
 if (!ALCHEMY_API_KEY) {
@@ -30,6 +31,7 @@ class RouterMonitor {
     private provider: ethers.JsonRpcProvider;
     private router: ethers.Contract;
     private tokenCache: Map<string, TokenInfo>;
+    private iface: ethers.Interface;
 
     constructor() {
         this.alchemy = new Alchemy(config);
@@ -41,7 +43,16 @@ class RouterMonitor {
             UNISWAP_V2_ROUTER_ABI,
             this.provider
         );
+        this.iface = new ethers.Interface(UNISWAP_V2_ROUTER_ABI);
         this.tokenCache = new Map();
+
+        // Pre-cache WETH
+        this.tokenCache.set(WETH_ADDRESS, {
+            address: WETH_ADDRESS,
+            symbol: "WETH",
+            decimals: 18,
+        });
+
         this.setupSubscriptions();
     }
 
@@ -76,15 +87,25 @@ class RouterMonitor {
             );
 
             const [symbol, decimals] = await Promise.all([
-                tokenContract.symbol(),
-                tokenContract.decimals(),
+                tokenContract.symbol().catch(() => null),
+                tokenContract.decimals().catch(() => 18),
             ]);
 
-            const tokenInfo = { address, symbol, decimals };
+            const tokenInfo = {
+                address,
+                symbol: symbol || address.slice(0, 10),
+                decimals,
+            };
             this.tokenCache.set(address, tokenInfo);
             return tokenInfo;
         } catch (error) {
-            return { address };
+            const tokenInfo = {
+                address,
+                symbol: address.slice(0, 10),
+                decimals: 18,
+            };
+            this.tokenCache.set(address, tokenInfo);
+            return tokenInfo;
         }
     }
 
@@ -97,8 +118,13 @@ class RouterMonitor {
             .join(" → ");
     }
 
-    private formatValue(value: string): string {
-        return `${parseFloat(ethers.formatEther(value)).toFixed(4)} ETH`;
+    private formatValue(value: string | bigint, decimals: number = 18): string {
+        try {
+            const formatted = ethers.formatUnits(value, decimals);
+            return `${parseFloat(formatted).toFixed(4)}`;
+        } catch (error) {
+            return "0.0000";
+        }
     }
 
     private async decodeRouterFunction(tx: any): Promise<{
@@ -108,9 +134,7 @@ class RouterMonitor {
     }> {
         try {
             const txData = tx.input;
-            const decoded = this.router.interface.parseTransaction({
-                data: txData,
-            });
+            const decoded = this.iface.parseTransaction({ data: txData });
 
             if (!decoded) {
                 throw new Error("Could not decode transaction data");
@@ -119,50 +143,118 @@ class RouterMonitor {
             const formatted: { [key: string]: string } = {};
 
             // Format common parameters
-            if (decoded.args.path) {
-                formatted.path = await this.getTokenPathInfo(decoded.args.path);
-            }
-            if (decoded.args.amountIn) {
-                formatted.amountIn = ethers.formatEther(decoded.args.amountIn);
-            }
-            if (decoded.args.amountOut) {
-                formatted.amountOut = ethers.formatEther(
-                    decoded.args.amountOut
-                );
-            }
-            if (decoded.args.amountOutMin) {
-                formatted.amountOutMin = ethers.formatEther(
-                    decoded.args.amountOutMin
-                );
-            }
-            if (decoded.args.amountInMax) {
-                formatted.amountInMax = ethers.formatEther(
-                    decoded.args.amountInMax
-                );
-            }
-            if (decoded.args.to) {
-                formatted.to = decoded.args.to;
+            if (decoded.args) {
+                if (decoded.args.path) {
+                    formatted.path = await this.getTokenPathInfo(
+                        decoded.args.path
+                    );
+                }
+                if (decoded.args.amountIn) {
+                    const firstToken = decoded.args.path?.[0];
+                    const tokenInfo = firstToken
+                        ? await this.getTokenInfo(firstToken)
+                        : null;
+                    formatted.amountIn = `${this.formatValue(
+                        decoded.args.amountIn,
+                        tokenInfo?.decimals
+                    )} ${tokenInfo?.symbol || ""}`;
+                }
+                if (decoded.args.amountOut) {
+                    const lastToken =
+                        decoded.args.path?.[decoded.args.path.length - 1];
+                    const tokenInfo = lastToken
+                        ? await this.getTokenInfo(lastToken)
+                        : null;
+                    formatted.amountOut = `${this.formatValue(
+                        decoded.args.amountOut,
+                        tokenInfo?.decimals
+                    )} ${tokenInfo?.symbol || ""}`;
+                }
+                if (decoded.args.amountOutMin) {
+                    const lastToken =
+                        decoded.args.path?.[decoded.args.path.length - 1];
+                    const tokenInfo = lastToken
+                        ? await this.getTokenInfo(lastToken)
+                        : null;
+                    formatted.amountOutMin = `${this.formatValue(
+                        decoded.args.amountOutMin,
+                        tokenInfo?.decimals
+                    )} ${tokenInfo?.symbol || ""}`;
+                }
+                if (decoded.args.amountInMax) {
+                    const firstToken = decoded.args.path?.[0];
+                    const tokenInfo = firstToken
+                        ? await this.getTokenInfo(firstToken)
+                        : null;
+                    formatted.amountInMax = `${this.formatValue(
+                        decoded.args.amountInMax,
+                        tokenInfo?.decimals
+                    )} ${tokenInfo?.symbol || ""}`;
+                }
+                if (decoded.args.to) {
+                    formatted.to = decoded.args.to;
+                }
+                // Add liquidity specific parameters
+                if (decoded.args.amountADesired) {
+                    const tokenInfo = decoded.args.tokenA
+                        ? await this.getTokenInfo(decoded.args.tokenA)
+                        : null;
+                    formatted.amountADesired = `${this.formatValue(
+                        decoded.args.amountADesired,
+                        tokenInfo?.decimals
+                    )} ${tokenInfo?.symbol || ""}`;
+                }
+                if (decoded.args.amountBDesired) {
+                    const tokenInfo = decoded.args.tokenB
+                        ? await this.getTokenInfo(decoded.args.tokenB)
+                        : null;
+                    formatted.amountBDesired = `${this.formatValue(
+                        decoded.args.amountBDesired,
+                        tokenInfo?.decimals
+                    )} ${tokenInfo?.symbol || ""}`;
+                }
             }
 
             return {
                 name: decoded.name,
-                args: decoded.args,
+                args: decoded.args || [],
                 formatted,
             };
         } catch (error) {
-            console.error("Error decoding function:", error);
-            return {
-                name: "UNKNOWN",
-                args: [],
-                formatted: {},
-            };
+            // Try to get at least the function signature
+            try {
+                const signature = tx.input.slice(0, 10);
+                const functionNames = Object.keys(this.iface.fragments).filter(
+                    (name) => {
+                        try {
+                            return (
+                                this.iface.getFunction(name)?.selector ===
+                                signature
+                            );
+                        } catch {
+                            return false;
+                        }
+                    }
+                );
+                return {
+                    name: functionNames[0] || "UNKNOWN",
+                    args: [],
+                    formatted: {},
+                };
+            } catch (e) {
+                return {
+                    name: "UNKNOWN",
+                    args: [],
+                    formatted: {},
+                };
+            }
         }
     }
 
     private async handleRouterTransaction(tx: any) {
         try {
             const decodedFunction = await this.decodeRouterFunction(tx);
-            const formattedValue = this.formatValue(tx.value);
+            const formattedValue = `${this.formatValue(tx.value)} ETH`;
             const gasPrice = ethers.formatUnits(
                 tx.maxFeePerGas || tx.gasPrice,
                 "gwei"
@@ -202,6 +294,9 @@ class RouterMonitor {
             amountOutMin: "📉",
             amountInMax: "📈",
             to: "🎯",
+            amountADesired: "💎",
+            amountBDesired: "💎",
+            liquidity: "💧",
         };
         return emojiMap[paramName] || "📋";
     }
