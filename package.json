@@ -1,7 +1,7 @@
 {
     "scripts": {
-        "start": "ts-node src/monitor.ts",
-        "dev": "nodemon --exec ts-node src/monitor.ts",
+        "start": "ts-node src/routerMonitor.ts",
+        "dev": "nodemon --exec ts-node src/routerMonitor.ts",
         "build": "tsc",
         "lint": "tsc --noEmit"
     },
