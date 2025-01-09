@@ -50,13 +50,22 @@ class TransactionMonitor {
     private async setupSubscriptions() {
         console.log("Setting up subscriptions...");
 
+        // Debug log
+        console.log("Monitoring addresses:", {
+            pool: USDC_ETH_POOL,
+            router: UNISWAP_V2_ROUTER,
+        });
+
         // Subscribe to pending transactions for both pool and router
         this.alchemy.ws.on(
             {
                 method: AlchemySubscription.PENDING_TRANSACTIONS,
-                toAddress: [USDC_ETH_POOL, UNISWAP_V2_ROUTER],
+                toAddress: UNISWAP_V2_ROUTER,
             },
-            (tx) => this.handlePendingTransaction(tx)
+            (tx) => {
+                console.log("Received transaction:", tx);
+                this.handlePendingTransaction(tx);
+            }
         );
 
         console.log("Subscriptions established");
