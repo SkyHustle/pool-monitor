@@ -32,6 +32,50 @@ class RouterMonitor {
     private router: ethers.Contract;
     private tokenCache: Map<string, TokenInfo>;
     private iface: ethers.Interface;
+    private knownSignatures: { [key: string]: string } = {
+        "0x791ac947": "swapExactTokensForTokensSupportingFeeOnTransferTokens",
+        "0x38ed1739": "swapExactTokensForTokens",
+        "0x7ff36ab5": "swapExactETHForTokens",
+        "0x18cbafe5": "swapExactTokensForETH",
+        "0xfb3bdb41": "swapETHForExactTokens",
+        "0x4a25d94a": "swapTokensForExactETH",
+        "0x8803dbee": "swapTokensForExactTokens",
+        "0xf305d719": "addLiquidityETH",
+        "0xe8e33700": "addLiquidity",
+        "0xbaa2abde": "removeLiquidity",
+        "0x02751cec": "removeLiquidityETH",
+    };
+
+    private functionTypes: { [key: string]: string[] } = {
+        swapExactTokensForTokensSupportingFeeOnTransferTokens: [
+            "uint256", // amountIn
+            "uint256", // amountOutMin
+            "address[]", // path
+            "address", // to
+            "uint256", // deadline
+        ],
+        swapExactTokensForTokens: [
+            "uint256", // amountIn
+            "uint256", // amountOutMin
+            "address[]", // path
+            "address", // to
+            "uint256", // deadline
+        ],
+        swapExactETHForTokens: [
+            "uint256", // amountOutMin
+            "address[]", // path
+            "address", // to
+            "uint256", // deadline
+        ],
+        swapExactTokensForETH: [
+            "uint256", // amountIn
+            "uint256", // amountOutMin
+            "address[]", // path
+            "address", // to
+            "uint256", // deadline
+        ],
+        // Add other function types as needed
+    };
 
     constructor() {
         this.alchemy = new Alchemy(config);
@@ -127,6 +171,18 @@ class RouterMonitor {
         }
     }
 
+    private decodeParameters(types: string[], data: string): any {
+        const abiCoder = new ethers.AbiCoder();
+        // Remove function signature (first 4 bytes / 8 hex chars + '0x')
+        const params = "0x" + data.slice(10);
+        try {
+            return abiCoder.decode(types, params);
+        } catch (error) {
+            console.log("⚠️ Failed to decode parameters:", error);
+            return null;
+        }
+    }
+
     private async decodeRouterFunction(tx: any): Promise<{
         name: string;
         args: any[];
@@ -139,6 +195,65 @@ class RouterMonitor {
                 `\n🔍 Debug: Attempting to decode function with signature: ${signature}`
             );
 
+            if (this.knownSignatures[signature]) {
+                const functionName = this.knownSignatures[signature];
+                console.log(
+                    `🎯 Debug: Found matching signature for ${functionName}`
+                );
+
+                // Get parameter types for this function
+                const types = this.functionTypes[functionName];
+                if (types) {
+                    const decoded = this.decodeParameters(types, txData);
+                    if (decoded) {
+                        const formatted: { [key: string]: string } = {};
+
+                        // Format parameters based on the function type
+                        if (decoded[2] && Array.isArray(decoded[2])) {
+                            // path array
+                            const path = decoded[2];
+                            formatted.path = await this.getTokenPathInfo(path);
+
+                            if (decoded[0]) {
+                                // amountIn
+                                const firstToken = path[0];
+                                const tokenInfo = await this.getTokenInfo(
+                                    firstToken
+                                );
+                                formatted.amountIn = `${this.formatValue(
+                                    decoded[0],
+                                    tokenInfo.decimals
+                                )} ${tokenInfo.symbol}`;
+                            }
+
+                            if (decoded[1]) {
+                                // amountOutMin
+                                const lastToken = path[path.length - 1];
+                                const outTokenInfo = await this.getTokenInfo(
+                                    lastToken
+                                );
+                                formatted.amountOutMin = `${this.formatValue(
+                                    decoded[1],
+                                    outTokenInfo.decimals
+                                )} ${outTokenInfo.symbol}`;
+                            }
+
+                            if (decoded[3]) {
+                                // to address
+                                formatted.to = decoded[3];
+                            }
+                        }
+
+                        return {
+                            name: functionName,
+                            args: decoded,
+                            formatted,
+                        };
+                    }
+                }
+            }
+
+            // Try the interface if manual decoding fails
             const decoded = this.iface.parseTransaction({ data: txData });
 
             if (!decoded) {
@@ -229,12 +344,72 @@ class RouterMonitor {
             // Try to get at least the function signature
             try {
                 const signature = tx.input.slice(0, 10);
-                console.log(
-                    `\n❌ Debug: Initial decode failed. Function signature: ${signature}`
-                );
-                console.log(`📄 Debug: Full input data: ${tx.input}`);
+                // First try our known signatures map
+                if (this.knownSignatures[signature]) {
+                    // Try to decode parameters even if initial parsing failed
+                    try {
+                        const decodedParams = this.iface.decodeFunctionData(
+                            this.knownSignatures[signature],
+                            tx.input
+                        );
 
-                // Try to match against known function signatures
+                        const formatted: { [key: string]: string } = {};
+
+                        // Format parameters based on the function type
+                        if (decodedParams.path) {
+                            formatted.path = await this.getTokenPathInfo(
+                                decodedParams.path
+                            );
+
+                            if (decodedParams.amountIn) {
+                                const firstToken = decodedParams.path[0];
+                                const tokenInfo = await this.getTokenInfo(
+                                    firstToken
+                                );
+                                formatted.amountIn = `${this.formatValue(
+                                    decodedParams.amountIn,
+                                    tokenInfo.decimals
+                                )} ${tokenInfo.symbol}`;
+                            }
+
+                            if (decodedParams.amountOutMin) {
+                                const lastToken =
+                                    decodedParams.path[
+                                        decodedParams.path.length - 1
+                                    ];
+                                const outTokenInfo = await this.getTokenInfo(
+                                    lastToken
+                                );
+                                formatted.amountOutMin = `${this.formatValue(
+                                    decodedParams.amountOutMin,
+                                    outTokenInfo.decimals
+                                )} ${outTokenInfo.symbol}`;
+                            }
+
+                            if (decodedParams.to) {
+                                formatted.to = decodedParams.to;
+                            }
+                        }
+
+                        return {
+                            name: this.knownSignatures[signature],
+                            args: decodedParams,
+                            formatted,
+                        };
+                    } catch (decodeError) {
+                        console.log(
+                            "⚠️ Debug: Failed to decode parameters:",
+                            decodeError
+                        );
+                        return {
+                            name: this.knownSignatures[signature],
+                            args: [],
+                            formatted: {},
+                        };
+                    }
+                }
+
+                // Then try the interface
                 const functionNames = Object.keys(this.iface.fragments).filter(
                     (name) => {
                         try {
