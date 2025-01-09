@@ -6,6 +6,7 @@ dotenv.config();
 
 // Constants
 const USDC_ETH_POOL = "0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc";
+const UNISWAP_V2_ROUTER = "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D";
 const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY;
 
 if (!ALCHEMY_API_KEY) {
@@ -49,11 +50,11 @@ class TransactionMonitor {
     private async setupSubscriptions() {
         console.log("Setting up subscriptions...");
 
-        // Subscribe to pending transactions
+        // Subscribe to pending transactions for both pool and router
         this.alchemy.ws.on(
             {
                 method: AlchemySubscription.PENDING_TRANSACTIONS,
-                toAddress: USDC_ETH_POOL,
+                toAddress: [USDC_ETH_POOL, UNISWAP_V2_ROUTER],
             },
             (tx) => this.handlePendingTransaction(tx)
         );
@@ -84,7 +85,14 @@ class TransactionMonitor {
     }
 
     private handlePendingTransaction(transaction: any) {
-        if (transaction.to?.toLowerCase() === USDC_ETH_POOL.toLowerCase()) {
+        const toAddress = transaction.to?.toLowerCase();
+        if (
+            toAddress === USDC_ETH_POOL.toLowerCase() ||
+            (toAddress === UNISWAP_V2_ROUTER.toLowerCase() &&
+                transaction.input.includes(
+                    USDC_ETH_POOL.toLowerCase().slice(2)
+                ))
+        ) {
             const txType = this.getTransactionType(transaction.input);
 
             const txData: TransactionData = {
