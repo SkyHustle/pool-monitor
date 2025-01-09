@@ -1,9 +1,9 @@
 {
     "scripts": {
         "start": "ts-node src/routerMonitor.ts",
-        "dev": "nodemon --exec ts-node src/routerMonitor.ts",
+        "start:pool": "ts-node src/poolMonitor.ts",
         "build": "tsc",
-        "lint": "tsc --noEmit"
+        "dev": "nodemon src/routerMonitor.ts"
     },
     "dependencies": {
         "alchemy-sdk": "^2.12.0",
