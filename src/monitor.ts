@@ -17,6 +17,9 @@ const FUNCTION_SIGNATURES = {
     SWAP: "0x022c0d9f", // swap(uint amount0Out, uint amount1Out, address to, bytes data)
     ADD_LIQUIDITY: "0xf305d719", // addLiquidity(address tokenA, address tokenB, uint amountADesired, uint amountBDesired, uint amountAMin, uint amountBMin, address to, uint deadline)
     REMOVE_LIQUIDITY: "0xbaa2abde", // removeLiquidity(address tokenA, address tokenB, uint liquidity, uint amountAMin, uint amountBMin, address to, uint deadline)
+    MINT: "0x6a627842", // mint(address to)
+    BURN: "0x3c6bb436", // burn(address to)
+    SYNC: "0xfff6cae9", // sync()
 };
 
 // Configure Alchemy SDK
