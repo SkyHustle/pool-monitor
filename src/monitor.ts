@@ -66,15 +66,23 @@ class TransactionMonitor {
             router: UNISWAP_V2_ROUTER,
         });
 
-        // Subscribe to pending transactions for both pool and router
+        // Subscribe to pending transactions
         this.alchemy.ws.on(
             {
                 method: AlchemySubscription.PENDING_TRANSACTIONS,
-                toAddress: UNISWAP_V2_ROUTER,
+                toAddress: [USDC_ETH_POOL, UNISWAP_V2_ROUTER],
             },
             (tx) => {
-                console.log("Received transaction:", tx);
-                this.handlePendingTransaction(tx);
+                // Check if transaction is for our pool
+                if (
+                    tx.to?.toLowerCase() === USDC_ETH_POOL.toLowerCase() ||
+                    (tx.to?.toLowerCase() === UNISWAP_V2_ROUTER.toLowerCase() &&
+                        tx.input
+                            .toLowerCase()
+                            .includes(USDC_ETH_POOL.toLowerCase().slice(2)))
+                ) {
+                    this.handlePendingTransaction(tx);
+                }
             }
         );
 
