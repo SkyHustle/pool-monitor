@@ -461,23 +461,30 @@ class RouterMonitor {
             // Create a formatted log entry
             console.log("\n🔄 Router Transaction Detected");
             console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-            console.log(`📝 Function: ${decodedFunction.name}`);
 
-            // Log formatted parameters
-            Object.entries(decodedFunction.formatted).forEach(
-                ([key, value]) => {
-                    const emoji = this.getParameterEmoji(key);
+            // Standard order of fields
+            const standardFields = [
+                ["Function", decodedFunction.name],
+                ["path", decodedFunction.formatted.path],
+                ["amountIn", decodedFunction.formatted.amountIn],
+                ["amountOutMin", decodedFunction.formatted.amountOutMin],
+                ["amountOut", decodedFunction.formatted.amountOut],
+                ["amountInMax", decodedFunction.formatted.amountInMax],
+                ["to", decodedFunction.formatted.to],
+                ["Value", formattedValue],
+                ["From", tx.from],
+                ["Gas Price", `${parseFloat(gasPrice).toFixed(2)} gwei`],
+                ["Hash", tx.hash],
+            ];
+
+            // Log fields in standard order, skipping empty ones
+            standardFields.forEach(([key, value]) => {
+                if (value) {
+                    const emoji = this.getParameterEmoji(key.toLowerCase());
                     console.log(`${emoji} ${key}: ${value}`);
                 }
-            );
+            });
 
-            // Log transaction details
-            console.log(`💰 Value: ${formattedValue}`);
-            console.log(`👤 From: ${tx.from}`);
-            console.log(
-                `⛽ Gas Price: ${parseFloat(gasPrice).toFixed(2)} gwei`
-            );
-            console.log(`🔗 Hash: ${tx.hash}`);
             console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
         } catch (error) {
             console.error("Error processing router transaction:", error);
@@ -486,14 +493,19 @@ class RouterMonitor {
 
     private getParameterEmoji(paramName: string): string {
         const emojiMap: { [key: string]: string } = {
+            function: "📝",
             path: "🛣️",
-            amountIn: "📥",
-            amountOut: "📤",
-            amountOutMin: "📉",
-            amountInMax: "📈",
+            amountin: "📥",
+            amountout: "📤",
+            amountoutmin: "📉",
+            amountinmax: "📈",
             to: "🎯",
-            amountADesired: "💎",
-            amountBDesired: "💎",
+            value: "💰",
+            from: "👤",
+            "gas price": "⛽",
+            hash: "🔗",
+            amountadesired: "💎",
+            amountbdesired: "💎",
             liquidity: "💧",
         };
         return emojiMap[paramName] || "📋";
