@@ -134,6 +134,11 @@ class RouterMonitor {
     }> {
         try {
             const txData = tx.input;
+            const signature = txData.slice(0, 10);
+            console.log(
+                `\n🔍 Debug: Attempting to decode function with signature: ${signature}`
+            );
+
             const decoded = this.iface.parseTransaction({ data: txData });
 
             if (!decoded) {
@@ -224,24 +229,42 @@ class RouterMonitor {
             // Try to get at least the function signature
             try {
                 const signature = tx.input.slice(0, 10);
+                console.log(
+                    `\n❌ Debug: Initial decode failed. Function signature: ${signature}`
+                );
+                console.log(`📄 Debug: Full input data: ${tx.input}`);
+
+                // Try to match against known function signatures
                 const functionNames = Object.keys(this.iface.fragments).filter(
                     (name) => {
                         try {
-                            return (
-                                this.iface.getFunction(name)?.selector ===
-                                signature
+                            const selector =
+                                this.iface.getFunction(name)?.selector;
+                            console.log(
+                                `🔍 Debug: Checking against ${name} (${selector})`
                             );
+                            return selector === signature;
                         } catch {
                             return false;
                         }
                     }
                 );
+
+                if (functionNames.length === 0) {
+                    console.log(
+                        "⚠️ Debug: No matching function signature found in ABI"
+                    );
+                }
+
                 return {
                     name: functionNames[0] || "UNKNOWN",
                     args: [],
                     formatted: {},
                 };
             } catch (e) {
+                console.log(
+                    "💥 Debug: Failed to decode even the function signature"
+                );
                 return {
                     name: "UNKNOWN",
                     args: [],
