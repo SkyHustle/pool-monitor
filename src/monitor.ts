@@ -70,17 +70,22 @@ class TransactionMonitor {
         this.alchemy.ws.on(
             {
                 method: AlchemySubscription.PENDING_TRANSACTIONS,
-                toAddress: [USDC_ETH_POOL, UNISWAP_V2_ROUTER],
+                toAddress: UNISWAP_V2_ROUTER,
             },
             (tx) => {
+                // Debug: Log transaction input data
+                const poolAddressInInput = tx.input
+                    .toLowerCase()
+                    .includes(USDC_ETH_POOL.toLowerCase().slice(2));
+
+                console.log(
+                    "Transaction to router:",
+                    poolAddressInInput ? "Involves our pool" : "Different pool"
+                );
+
                 // Check if transaction is for our pool
-                if (
-                    tx.to?.toLowerCase() === USDC_ETH_POOL.toLowerCase() ||
-                    (tx.to?.toLowerCase() === UNISWAP_V2_ROUTER.toLowerCase() &&
-                        tx.input
-                            .toLowerCase()
-                            .includes(USDC_ETH_POOL.toLowerCase().slice(2)))
-                ) {
+                if (poolAddressInInput) {
+                    console.log("Found matching transaction!");
                     this.handlePendingTransaction(tx);
                 }
             }
