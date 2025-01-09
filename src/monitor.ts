@@ -71,7 +71,14 @@ class TransactionMonitor {
                 return "ADD_LIQUIDITY";
             case FUNCTION_SIGNATURES.REMOVE_LIQUIDITY:
                 return "REMOVE_LIQUIDITY";
+            case FUNCTION_SIGNATURES.MINT:
+                return "MINT";
+            case FUNCTION_SIGNATURES.BURN:
+                return "BURN";
+            case FUNCTION_SIGNATURES.SYNC:
+                return "SYNC";
             default:
+                console.log("Unknown function signature:", functionSignature);
                 return "UNKNOWN";
         }
     }
