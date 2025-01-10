@@ -69,6 +69,7 @@ class PoolMonitor {
         this.pool.on("Burn", this.handleBurn.bind(this));
         this.pool.on("Swap", this.handleSwap.bind(this));
         this.pool.on("Sync", this.handleSync.bind(this));
+        this.pool.on("Approval", this.handleApproval.bind(this));
 
         console.log("✅ Pool monitoring established");
     }
@@ -347,6 +348,46 @@ class PoolMonitor {
             }
         } catch (error) {
             console.error("Error handling Sync event:", error);
+        }
+    }
+
+    private async handleApproval(
+        owner: string,
+        spender: string,
+        value: bigint,
+        event: any
+    ) {
+        try {
+            const [token0Info, token1Info] = await Promise.all([
+                this.getTokenInfo(USDC_ADDRESS),
+                this.getTokenInfo(WETH_ADDRESS),
+            ]);
+
+            const priceLog = await this.logPoolPrice(event);
+
+            console.log("\n✅ Pool Approval Event");
+            console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            console.log(`📝 Event: Approval`);
+            console.log(`👤 Owner: ${owner}`);
+            console.log(`🎯 Spender: ${spender}`);
+
+            // Format value based on the token being approved
+            const token = event.log.address;
+            const tokenInfo =
+                token.toLowerCase() === USDC_ADDRESS.toLowerCase()
+                    ? token0Info
+                    : token1Info;
+            console.log(
+                `💰 Value: ${this.formatValue(value, tokenInfo.decimals)} ${
+                    tokenInfo.symbol
+                }`
+            );
+
+            if (priceLog) console.log(priceLog);
+            console.log(`🔗 Hash: ${event.log.transactionHash}`);
+            console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+        } catch (error) {
+            console.error("Error handling Approval event:", error);
         }
     }
 }
