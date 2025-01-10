@@ -120,6 +120,29 @@ class PoolMonitor {
         }
     }
 
+    private async logPoolPrice(event: any) {
+        try {
+            // Get current reserves
+            const [reserve0, reserve1] = await this.pool.getReserves();
+            const [token0Info, token1Info] = await Promise.all([
+                this.getTokenInfo(USDC_ADDRESS),
+                this.getTokenInfo(WETH_ADDRESS),
+            ]);
+
+            const priceInUSDC = this.calculatePrice(
+                reserve0,
+                reserve1,
+                token0Info.decimals!,
+                token1Info.decimals!
+            );
+
+            return `💵 ETH Price: ${priceInUSDC} USDC`;
+        } catch (error) {
+            console.error("Error logging pool price:", error);
+            return "";
+        }
+    }
+
     private async handleMint(
         sender: string,
         amount0: bigint,
@@ -131,6 +154,8 @@ class PoolMonitor {
                 this.getTokenInfo(USDC_ADDRESS),
                 this.getTokenInfo(WETH_ADDRESS),
             ]);
+
+            const priceLog = await this.logPoolPrice(event);
 
             console.log("\n🌱 Pool Mint Event");
             console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -147,7 +172,8 @@ class PoolMonitor {
                     token1Info.decimals
                 )} ${token1Info.symbol}`
             );
-            console.log(`👤 Sender: ${sender}`);
+            console.log(`🔗 Sender: ${sender}`);
+            if (priceLog) console.log(priceLog);
             console.log(`🔗 Hash: ${event.log.transactionHash}`);
             console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
         } catch (error) {
@@ -168,6 +194,8 @@ class PoolMonitor {
                 this.getTokenInfo(WETH_ADDRESS),
             ]);
 
+            const priceLog = await this.logPoolPrice(event);
+
             console.log("\n🔥 Pool Burn Event");
             console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
             console.log(`📝 Event: Burn`);
@@ -183,8 +211,9 @@ class PoolMonitor {
                     token1Info.decimals
                 )} ${token1Info.symbol}`
             );
-            console.log(`👤 Sender: ${sender}`);
+            console.log(`🔗 Sender: ${sender}`);
             console.log(`🎯 To: ${to}`);
+            if (priceLog) console.log(priceLog);
             console.log(`🔗 Hash: ${event.log.transactionHash}`);
             console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
         } catch (error) {
@@ -206,6 +235,8 @@ class PoolMonitor {
                 this.getTokenInfo(USDC_ADDRESS),
                 this.getTokenInfo(WETH_ADDRESS),
             ]);
+
+            const priceLog = await this.logPoolPrice(event);
 
             console.log("\n💫 Pool Swap Event");
             console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -242,8 +273,9 @@ class PoolMonitor {
                     )} ${token1Info.symbol}`
                 );
             }
-            console.log(`👤 Sender: ${sender}`);
+            console.log(`🔗 Sender: ${sender}`);
             console.log(`🎯 To: ${to}`);
+            if (priceLog) console.log(priceLog);
             console.log(`🔗 Hash: ${event.log.transactionHash}`);
             console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
         } catch (error) {
@@ -267,8 +299,17 @@ class PoolMonitor {
         return price.toFixed(2);
     }
 
+    // Track seen transaction hashes to prevent duplicate Sync logs
+    private seenTxHashes = new Set<string>();
+
     private async handleSync(reserve0: bigint, reserve1: bigint, event: any) {
         try {
+            // Skip if we've already seen this transaction
+            if (this.seenTxHashes.has(event.log.transactionHash)) {
+                return;
+            }
+            this.seenTxHashes.add(event.log.transactionHash);
+
             const [token0Info, token1Info] = await Promise.all([
                 this.getTokenInfo(USDC_ADDRESS),
                 this.getTokenInfo(WETH_ADDRESS),
@@ -296,9 +337,14 @@ class PoolMonitor {
                     token1Info.decimals
                 )} ${token1Info.symbol}`
             );
-            console.log(`🔗 ETH Price: ${priceInUSDC} USDC`);
+            console.log(`💵 ETH Price: ${priceInUSDC} USDC`);
             console.log(`🔗 Hash: ${event.log.transactionHash}`);
             console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+
+            // Clear old transaction hashes periodically to prevent memory growth
+            if (this.seenTxHashes.size > 1000) {
+                this.seenTxHashes.clear();
+            }
         } catch (error) {
             console.error("Error handling Sync event:", error);
         }
