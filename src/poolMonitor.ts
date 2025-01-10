@@ -377,7 +377,18 @@ class PoolMonitor {
         event: any
     ) {
         try {
-            const priceInUSDC = this.getCurrentPrice();
+            // Add this swap's hash to seen transactions immediately
+            this.seenTxHashes.add(event.log.transactionHash);
+
+            // Calculate new reserves based on the swap amounts
+            const newReserve0 =
+                this.currentReserves.reserve0 + amount0In - amount0Out;
+            const newReserve1 =
+                this.currentReserves.reserve1 + amount1In - amount1Out;
+            const calculatedPrice = this.calculatePriceOptimized(
+                newReserve0,
+                newReserve1
+            );
 
             console.log("\n💫 Pool Swap Event");
             console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -416,7 +427,7 @@ class PoolMonitor {
             }
             console.log(`🔗 Sender: ${sender}`);
             console.log(`🎯 To: ${to}`);
-            console.log(`💵 ETH Price: ${priceInUSDC} USDC`);
+            console.log(`💵 Calculated Price: ${calculatedPrice} USDC`);
             console.log(`🔗 Hash: ${event.log.transactionHash}`);
             console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
         } catch (error) {
@@ -437,17 +448,33 @@ class PoolMonitor {
 
     private async handleSync(reserve0: bigint, reserve1: bigint, event: any) {
         try {
-            // Skip if we've already seen this transaction
+            // Skip if we've already seen this transaction (it's likely from a Swap)
             if (this.seenTxHashes.has(event.log.transactionHash)) {
+                const oldPrice = this.calculatePriceOptimized(
+                    this.currentReserves.reserve0,
+                    this.currentReserves.reserve1
+                );
+                // Update reserves and calculate new price
+                this.currentReserves = { reserve0, reserve1 };
+                const newPrice = this.calculatePriceOptimized(
+                    reserve0,
+                    reserve1
+                );
+
+                console.log("\n🔄 Related Sync Event");
+                console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                console.log(`Previous Price: ${oldPrice} USDC`);
+                console.log(`New Price: ${newPrice} USDC`);
+                console.log(`🔗 Hash: ${event.log.transactionHash}`);
+                console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
                 return;
             }
-            this.seenTxHashes.add(event.log.transactionHash);
 
-            // Update current reserves immediately
+            // If we haven't seen this Sync (it's independent), process it
             this.currentReserves = { reserve0, reserve1 };
             const priceInUSDC = this.getCurrentPrice();
 
-            console.log("\n🔄 Pool Sync Event");
+            console.log("\n🔄 Independent Sync Event");
             console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
             console.log(`📝 Event: Sync`);
             console.log(
