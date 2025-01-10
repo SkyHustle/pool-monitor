@@ -11,6 +11,46 @@ const USDC_ADDRESS = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
 const WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
 const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY;
 
+// Uniswap V2 Pair ABI (from https://github.com/Uniswap/v2-core/blob/master/contracts/interfaces/IUniswapV2Pair.sol)
+const UNISWAP_V2_PAIR_ABI = [
+    // Events
+    "event Approval(address indexed owner, address indexed spender, uint value)",
+    "event Transfer(address indexed from, address indexed to, uint value)",
+    "event Mint(address indexed sender, uint amount0, uint amount1)",
+    "event Burn(address indexed sender, uint amount0, uint amount1, address indexed to)",
+    "event Swap(address indexed sender, uint amount0In, uint amount1In, uint amount0Out, uint amount1Out, address indexed to)",
+    "event Sync(uint112 reserve0, uint112 reserve1)",
+
+    // Functions
+    "function name() external pure returns (string memory)",
+    "function symbol() external pure returns (string memory)",
+    "function decimals() external pure returns (uint8)",
+    "function totalSupply() external view returns (uint)",
+    "function balanceOf(address owner) external view returns (uint)",
+    "function allowance(address owner, address spender) external view returns (uint)",
+    "function approve(address spender, uint value) external returns (bool)",
+    "function transfer(address to, uint value) external returns (bool)",
+    "function transferFrom(address from, address to, uint value) external returns (bool)",
+    "function DOMAIN_SEPARATOR() external view returns (bytes32)",
+    "function PERMIT_TYPEHASH() external pure returns (bytes32)",
+    "function nonces(address owner) external view returns (uint)",
+    "function permit(address owner, address spender, uint value, uint deadline, uint8 v, bytes32 r, bytes32 s) external",
+    "function MINIMUM_LIQUIDITY() external pure returns (uint)",
+    "function factory() external view returns (address)",
+    "function token0() external view returns (address)",
+    "function token1() external view returns (address)",
+    "function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)",
+    "function price0CumulativeLast() external view returns (uint)",
+    "function price1CumulativeLast() external view returns (uint)",
+    "function kLast() external view returns (uint)",
+    "function mint(address to) external returns (uint liquidity)",
+    "function burn(address to) external returns (uint amount0, uint amount1)",
+    "function swap(uint amount0Out, uint amount1Out, address to, bytes calldata data) external",
+    "function skim(address to) external",
+    "function sync() external",
+    "function initialize(address, address) external",
+];
+
 if (!ALCHEMY_API_KEY) {
     throw new Error("ALCHEMY_API_KEY not found in environment variables");
 }
@@ -39,6 +79,17 @@ class PoolMonitor {
     private token0: ethers.Contract;
     private token1: ethers.Contract;
     private seenTxHashes = new Set<string>();
+    private readonly PRICE_SCALE_FACTOR = 10n ** 12n; // For fixed-point arithmetic
+    private readonly USDC_SCALE = 10n ** 6n;
+    private readonly WETH_SCALE = 10n ** 18n;
+    private readonly TOKEN_DECIMALS = {
+        [USDC_ADDRESS.toLowerCase()]: 6n,
+        [WETH_ADDRESS.toLowerCase()]: 18n,
+    };
+    private readonly TOKEN_SCALES = {
+        [USDC_ADDRESS.toLowerCase()]: 10n ** 6n,
+        [WETH_ADDRESS.toLowerCase()]: 10n ** 18n,
+    };
 
     constructor() {
         this.alchemy = new Alchemy(config);
@@ -64,9 +115,10 @@ class PoolMonitor {
             this.provider
         );
 
+        // Use the correct Pair ABI
         this.pool = new ethers.Contract(
             USDC_ETH_POOL,
-            UNISWAP_V2_ERC20_ABI,
+            UNISWAP_V2_PAIR_ABI,
             this.provider
         );
 
@@ -114,24 +166,83 @@ class PoolMonitor {
             this.initialize();
         });
 
-        // Subscribe to all events from the pool
-        this.pool.on("Mint", this.handleMint.bind(this));
-        this.pool.on("Burn", this.handleBurn.bind(this));
-        this.pool.on("Swap", this.handleSwap.bind(this));
-        this.pool.on("Sync", this.handleSync.bind(this));
-        this.pool.on("Approval", this.handleApproval.bind(this));
+        // Subscribe to each event type separately
+        this.pool.on(
+            "Swap",
+            (
+                sender: string,
+                amount0In: bigint,
+                amount1In: bigint,
+                amount0Out: bigint,
+                amount1Out: bigint,
+                to: string,
+                event: any
+            ) => {
+                console.log("🎯 Received Swap event");
+                this.handleSwap(
+                    sender,
+                    amount0In,
+                    amount1In,
+                    amount0Out,
+                    amount1Out,
+                    to,
+                    event
+                );
+            }
+        );
+
+        this.pool.on(
+            "Sync",
+            (reserve0: bigint, reserve1: bigint, event: any) => {
+                console.log("🎯 Received Sync event");
+                this.handleSync(reserve0, reserve1, event);
+            }
+        );
+
+        this.pool.on(
+            "Mint",
+            (sender: string, amount0: bigint, amount1: bigint, event: any) => {
+                console.log("🎯 Received Mint event");
+                this.handleMint(sender, amount0, amount1, event);
+            }
+        );
+
+        this.pool.on(
+            "Burn",
+            (
+                sender: string,
+                amount0: bigint,
+                amount1: bigint,
+                to: string,
+                event: any
+            ) => {
+                console.log("🎯 Received Burn event");
+                this.handleBurn(sender, amount0, amount1, to, event);
+            }
+        );
+
+        // Test the connection by getting current reserves
+        this.pool
+            .getReserves()
+            .then(([r0, r1]) => {
+                console.log("✅ Successfully connected to pool");
+                console.log(
+                    `Current reserves: ${this.formatValue(
+                        r0,
+                        6
+                    )} USDC, ${this.formatValue(r1, 18)} WETH`
+                );
+            })
+            .catch((error) => {
+                console.error("❌ Error connecting to pool:", error);
+            });
 
         console.log("✅ Pool monitoring established");
     }
 
     private getCurrentPrice(): string {
         const { reserve0, reserve1 } = this.currentReserves;
-        return this.calculatePrice(
-            reserve0,
-            reserve1,
-            this.tokenCache.get(USDC_ADDRESS.toLowerCase())!.decimals!,
-            this.tokenCache.get(WETH_ADDRESS.toLowerCase())!.decimals!
-        );
+        return this.calculatePriceOptimized(reserve0, reserve1);
     }
 
     private async getTokenInfo(address: string): Promise<TokenInfo> {
@@ -162,6 +273,11 @@ class PoolMonitor {
                 decimals: 18,
             };
         }
+    }
+
+    private formatValueOptimized(value: bigint, scale: bigint): string {
+        const scaled = (value * this.PRICE_SCALE_FACTOR) / scale;
+        return (Number(scaled) / Number(this.PRICE_SCALE_FACTOR)).toFixed(4);
     }
 
     private formatValue(value: string | bigint, decimals: number = 18): string {
@@ -261,11 +377,6 @@ class PoolMonitor {
         event: any
     ) {
         try {
-            const [token0Info, token1Info] = await Promise.all([
-                this.getTokenInfo(USDC_ADDRESS),
-                this.getTokenInfo(WETH_ADDRESS),
-            ]);
-
             const priceInUSDC = this.getCurrentPrice();
 
             console.log("\n💫 Pool Swap Event");
@@ -273,34 +384,34 @@ class PoolMonitor {
             console.log(`📝 Event: Swap`);
             if (amount0In > 0n) {
                 console.log(
-                    `📥 Amount0In: ${this.formatValue(
+                    `📥 Amount0In: ${this.formatTokenValue(
                         amount0In,
-                        token0Info.decimals
-                    )} ${token0Info.symbol}`
+                        USDC_ADDRESS
+                    )} USDC`
                 );
             }
             if (amount1In > 0n) {
                 console.log(
-                    `📥 Amount1In: ${this.formatValue(
+                    `📥 Amount1In: ${this.formatTokenValue(
                         amount1In,
-                        token1Info.decimals
-                    )} ${token1Info.symbol}`
+                        WETH_ADDRESS
+                    )} WETH`
                 );
             }
             if (amount0Out > 0n) {
                 console.log(
-                    `📤 Amount0Out: ${this.formatValue(
+                    `📤 Amount0Out: ${this.formatTokenValue(
                         amount0Out,
-                        token0Info.decimals
-                    )} ${token0Info.symbol}`
+                        USDC_ADDRESS
+                    )} USDC`
                 );
             }
             if (amount1Out > 0n) {
                 console.log(
-                    `📤 Amount1Out: ${this.formatValue(
+                    `📤 Amount1Out: ${this.formatTokenValue(
                         amount1Out,
-                        token1Info.decimals
-                    )} ${token1Info.symbol}`
+                        WETH_ADDRESS
+                    )} WETH`
                 );
             }
             console.log(`🔗 Sender: ${sender}`);
@@ -313,20 +424,15 @@ class PoolMonitor {
         }
     }
 
-    private calculatePrice(
+    private calculatePriceOptimized(
         reserve0: bigint,
-        reserve1: bigint,
-        token0Decimals: number,
-        token1Decimals: number
+        reserve1: bigint
     ): string {
-        // Calculate price in terms of token0 (USDC)
-        // price = reserve0/10^token0decimals / (reserve1/10^token1decimals)
-        const adjustedReserve0 =
-            Number(reserve0) / Math.pow(10, token0Decimals);
-        const adjustedReserve1 =
-            Number(reserve1) / Math.pow(10, token1Decimals);
-        const price = adjustedReserve0 / adjustedReserve1;
-        return price.toFixed(2);
+        // Use fixed-point arithmetic to avoid floating point operations
+        const price =
+            (reserve0 * this.PRICE_SCALE_FACTOR * this.WETH_SCALE) /
+            (reserve1 * this.USDC_SCALE);
+        return (Number(price) / Number(this.PRICE_SCALE_FACTOR)).toFixed(2);
     }
 
     private async handleSync(reserve0: bigint, reserve1: bigint, event: any) {
@@ -407,6 +513,12 @@ class PoolMonitor {
         } catch (error) {
             console.error("Error handling Approval event:", error);
         }
+    }
+
+    private formatTokenValue(value: bigint, tokenAddress: string): string {
+        const scale =
+            this.TOKEN_SCALES[tokenAddress.toLowerCase()] ?? this.WETH_SCALE;
+        return this.formatValueOptimized(value, scale);
     }
 }
 
