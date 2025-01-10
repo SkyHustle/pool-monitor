@@ -251,12 +251,35 @@ class PoolMonitor {
         }
     }
 
+    private calculatePrice(
+        reserve0: bigint,
+        reserve1: bigint,
+        token0Decimals: number,
+        token1Decimals: number
+    ): string {
+        // Calculate price in terms of token0 (USDC)
+        // price = reserve0/10^token0decimals / (reserve1/10^token1decimals)
+        const adjustedReserve0 =
+            Number(reserve0) / Math.pow(10, token0Decimals);
+        const adjustedReserve1 =
+            Number(reserve1) / Math.pow(10, token1Decimals);
+        const price = adjustedReserve0 / adjustedReserve1;
+        return price.toFixed(2);
+    }
+
     private async handleSync(reserve0: bigint, reserve1: bigint, event: any) {
         try {
             const [token0Info, token1Info] = await Promise.all([
                 this.getTokenInfo(USDC_ADDRESS),
                 this.getTokenInfo(WETH_ADDRESS),
             ]);
+
+            const priceInUSDC = this.calculatePrice(
+                reserve0,
+                reserve1,
+                token0Info.decimals!,
+                token1Info.decimals!
+            );
 
             console.log("\n🔄 Pool Sync Event");
             console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -273,6 +296,7 @@ class PoolMonitor {
                     token1Info.decimals
                 )} ${token1Info.symbol}`
             );
+            console.log(`🔗 ETH Price: ${priceInUSDC} USDC`);
             console.log(`🔗 Hash: ${event.log.transactionHash}`);
             console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
         } catch (error) {
